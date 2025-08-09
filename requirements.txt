@@ -1,0 +1,7 @@
+python-telegram-bot==20.3
+flask==2.3.3
+python-dotenv==1.0.0
+requests==2.31.0
+gspread==5.10.0
+google-auth==2.23.0
+groq==0.4.1
