@@ -1,0 +1,42 @@
+[
+  {
+    "question": "Gimana cara cairkan Lira ke cash lewat bank di Turki?",
+    "answer": "Kalau Lira sudah masuk ke rekening bank Turki kamu (contoh Ziraat, Enpara, Yapı Kredi), kamu bisa tarik langsung di ATM bank tersebut tanpa biaya tambahan dari bank penerima. Pilih menu 'Nakit Çekme'."
+  },
+  {
+    "question": "Kalau ke Papara bisa diambil cash gimana?",
+    "answer": "Saldo Papara bisa diambil cash lewat ATM yang mendukung Mastercard di Turki. Masukkan kartu Papara (atau virtual Papara dengan QR di ATM tertentu), pilih 'Nakit Çekme'. Biaya penarikan sekitar 5–10 TRY tergantung ATM."
+  },
+  {
+    "question": "Kalau ke Enpara gimana tarik tunainya?",
+    "answer": "Enpara bisa tarik tunai gratis di semua ATM QNB Finansbank di Turki. Masukkan kartu Enpara, pilih 'Nakit Çekme', masukkan nominal, dan uang langsung keluar."
+  },
+  {
+    "question": "Kalau mau tarik cash di ATM umum bisa?",
+    "answer": "Bisa, tapi pastikan bank atau e-wallet kamu mendukung jaringan ATM tersebut. Untuk kartu internasional biasanya ada biaya tambahan. Kalau pakai bank lokal Turki, penarikan di ATM bank lain biasanya kena biaya kecil."
+  },
+  {
+    "question": "Ziraat Bank gimana cara tarik tunainya?",
+    "answer": "Ziraat Bank bisa tarik tunai gratis di semua ATM Ziraat di Turki. Masukkan kartu Ziraat, pilih 'Nakit Çekme', masukkan PIN, pilih nominal. ATM Ziraat paling banyak di Turki, jadi gampang dicari."
+  },
+  {
+    "question": "Biaya tarik tunai di ATM Turki berapa?",
+    "answer": "Bank lokal Turki: gratis di ATM bank sendiri, 5-15 TRY di ATM bank lain. Kartu internasional: 2-5% dari nominal + biaya tetap 10-20 TRY. E-wallet seperti Papara: 5-10 TRY per transaksi."
+  },
+  {
+    "question": "Limit tarik tunai per hari di Turki berapa?",
+    "answer": "Bank lokal Turki: biasanya 3000-5000 TRY per hari. Kartu kredit internasional: tergantung limit kartu kamu. E-wallet: Papara 2000 TRY/hari, bisa ditingkatkan dengan verifikasi."
+  },
+  {
+    "question": "ATM mana yang paling mudah ditemukan di Turki?",
+    "answer": "Ziraat Bank paling banyak, ada di mana-mana. Garanti BBVA juga banyak di kota besar. İş Bankası dan Yapı Kredi juga mudah ditemukan. Untuk turis, ATM di bandara dan mall biasanya support kartu internasional."
+  },
+  {
+    "question": "Cara buka rekening bank di Turki gimana?",
+    "answer": "Perlu: paspor, visa/residence permit, alamat di Turki, nomor telepon Turki. Bank termudah: Ziraat (bank negara), Enpara (online), Papara (digital wallet). Proses 1-7 hari tergantung bank."
+  },
+  {
+    "question": "Papara itu apa dan gimana cara pakainya?",
+    "answer": "Papara adalah digital wallet Turki seperti GoPay/OVO. Bisa terima transfer, bayar online, tarik cash di ATM. Daftar online pakai paspor, verifikasi dengan selfie + dokumen. Dapat kartu fisik gratis."
+  }
+]
