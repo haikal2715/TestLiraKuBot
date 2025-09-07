@@ -52,152 +52,65 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 EXCHANGE_API_KEY = os.getenv('EXCHANGE_API_KEY')
 ADMIN_CHAT_ID = os.getenv('ADMIN_CHAT_ID')
 ADMIN_IBAN = os.getenv('ADMIN_IBAN', 'TR1234567890123456789012345')
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')  # API Key untuk Groq
+OWNER_USER_ID = int(os.getenv('OWNER_USER_ID', '0'))  # Add owner user ID to env
 
 # Feature toggles
 BUY_LIRA_ACTIVE = True
 SELL_LIRA_ACTIVE = True
 
-# Fee configuration
-ADMIN_FEE = 5000  # 5,000 IDR admin fee
+# Stock management (stored in memory, you can persist to file or database)
+STOCK = {
+    'lira': 0.0,    # TRY stock
+    'rupiah': 2500000  # IDR stock - initial 2.5M
+}
+
+# File to persist stock data
+STOCK_FILE = 'stock_data.json'
 
 # Conversation states
 (WAITING_BUY_AMOUNT, WAITING_BUY_NAME, WAITING_BUY_IBAN, WAITING_BUY_CONFIRMATION,
  WAITING_SELL_AMOUNT, WAITING_SELL_NAME, WAITING_SELL_ACCOUNT, WAITING_SELL_CONFIRMATION,
- AI_CHAT_STATE) = range(9)  # Tambahan state untuk AI chat
+ WAITING_STOCK_UPDATE_CURRENCY, WAITING_STOCK_UPDATE_AMOUNT) = range(10)
 
 # Google Sheets setup
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 SERVICE_ACCOUNT_FILE = 'lirakubot.json'
 SPREADSHEET_NAME = 'DATA LIRAKU.ID'
 
-# AI Agent Knowledge Base
-KNOWLEDGE_BASE_FILE = 'knowledge_base.json'
-
-def load_knowledge_base():
-    """Load knowledge base from JSON file"""
+def load_stock():
+    """Load stock from file"""
+    global STOCK
     try:
-        with open(KNOWLEDGE_BASE_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logger.warning(f"Knowledge base file {KNOWLEDGE_BASE_FILE} not found")
-        return []
-    except json.JSONDecodeError as e:
-        logger.error(f"Error parsing knowledge base JSON: {e}")
-        return []
-
-def find_answer_in_knowledge_base(user_question):
-    """Search for answer in knowledge base"""
-    knowledge_base = load_knowledge_base()
-    user_question_lower = user_question.lower()
-    
-    # Simple keyword matching
-    for item in knowledge_base:
-        question_lower = item['question'].lower()
-        
-        # Check if user question contains significant words from knowledge base question
-        question_words = question_lower.split()
-        matching_words = 0
-        
-        for word in question_words:
-            if len(word) > 2 and word in user_question_lower:  # Only count words longer than 2 chars
-                matching_words += 1
-        
-        # If more than 2 words match or specific keywords found
-        if matching_words >= 2 or any(keyword in user_question_lower for keyword in 
-            ['cash', 'tunai', 'atm', 'tarik', 'cairkan', 'papara', 'enpara', 'ziraat']):
-            return item['answer']
-    
-    return None
-
-async def ask_groq_ai(question, context=""):
-    """Ask Groq AI for answer"""
-    if not GROQ_API_KEY:
-        return "❌ AI service tidak tersedia saat ini."
-    
-    try:
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        system_prompt = """Kamu adalah asisten LiraKuBot yang membantu penukaran mata uang IDR ke TRY (Lira Turki) dan sebaliknya. 
-        Jawab dengan singkat maksimal 5 baris. Fokus pada informasi praktis tentang:
-        - Cara menggunakan uang Lira di Turki
-        - Tips transaksi di bank/ATM Turki
-        - Informasi umum tentang mata uang Lira
-        - Panduan praktis untuk turis di Turki
-        
-        Jangan berikan nasihat finansial atau investasi. Kalau ditanya tentang kurs/rate, arahkan untuk menggunakan menu bot."""
-        
-        data = {
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": question}
-            ],
-            "model": "llama3-8b-8192",
-            "temperature": 0.7,
-            "max_tokens": 300
-        }
-        
-        response = requests.post(url, headers=headers, json=data, timeout=10)
-        
-        if response.status_code == 200:
-            result = response.json()
-            return result['choices'][0]['message']['content'].strip()
-        else:
-            logger.error(f"Groq API error: {response.status_code} - {response.text}")
-            return "❌ Maaf, AI sedang tidak dapat menjawab. Silakan coba lagi atau hubungi @lirakuid"
-            
+        if os.path.exists(STOCK_FILE):
+            with open(STOCK_FILE, 'r') as f:
+                STOCK = json.load(f)
+                logger.info(f"Stock loaded: {STOCK}")
     except Exception as e:
-        logger.error(f"Error calling Groq API: {e}")
-        return "❌ Terjadi kesalahan. Silakan coba lagi atau hubungi @lirakuid"
+        logger.error(f"Error loading stock: {e}")
+        # Use default stock if loading fails
+        STOCK = {'lira': 0.0, 'rupiah': 2500000}
 
-async def handle_ai_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle AI question from user"""
-    user_question = update.message.text.strip()
-    
-    # Check if user wants to exit AI chat
-    if user_question.lower() in ['/menu', '/start', 'menu', 'keluar', 'exit', 'stop']:
-        context.user_data.pop('ai_chat_active', None)
-        welcome_message = (
-            "🔙 **Kembali ke Menu Utama**\n\n"
-            "💚 **Selamat datang di LiraKuBot!**\n\n"
-            "✅ Proses cepat & aman\n"
-            "✅ Langsung kirim ke IBAN\n"
-            "✅ Lebih hemat dibanding beli di bandara & bank\n\n"
-            "Silakan pilih menu:"
-        )
-        await update.message.reply_text(
-            welcome_message,
-            reply_markup=get_main_keyboard(),
-            parse_mode='Markdown'
-        )
-        return ConversationHandler.END
-    
-    # Show typing indicator
-    await update.message.chat.send_action(action="typing")
-    
-    # First check knowledge base
-    kb_answer = find_answer_in_knowledge_base(user_question)
-    
-    if kb_answer:
-        answer = f"💡 **Dari Knowledge Base:**\n\n{kb_answer}"
-    else:
-        # Ask Groq AI
-        ai_answer = await ask_groq_ai(user_question)
-        answer = f"🤖 **AI Assistant:**\n\n{ai_answer}"
-    
-    # Add footer with options
-    answer += "\n\n💬 Tanya lagi atau ketik /menu untuk kembali ke menu utama"
-    
-    await update.message.reply_text(
-        answer,
-        parse_mode='Markdown'
-    )
-    
-    return AI_CHAT_STATE
+def save_stock():
+    """Save stock to file"""
+    try:
+        with open(STOCK_FILE, 'w') as f:
+            json.dump(STOCK, f)
+        logger.info(f"Stock saved: {STOCK}")
+    except Exception as e:
+        logger.error(f"Error saving stock: {e}")
+
+def update_stock(currency, amount):
+    """Update stock and save to file"""
+    global STOCK
+    if currency in STOCK:
+        STOCK[currency] += amount
+        if STOCK[currency] < 0:
+            STOCK[currency] = 0
+        save_stock()
+
+def check_stock_availability(currency, amount):
+    """Check if stock is sufficient for transaction"""
+    return STOCK.get(currency, 0) >= amount
 
 # Flask app for keep alive
 if FLASK_AVAILABLE:
@@ -301,7 +214,19 @@ def get_main_keyboard():
         [InlineKeyboardButton("💸 Beli Lira", callback_data="buy_lira")],
         [InlineKeyboardButton("💵 Jual Lira", callback_data="sell_lira")],
         [InlineKeyboardButton("💱 Lihat Simulasi Kurs", callback_data="simulation")],
-        [InlineKeyboardButton("🤖 Tanya AI Assistant", callback_data="ask_ai")],  # New AI button
+        [InlineKeyboardButton("📊 Cek Stok", callback_data="check_stock")],
+        [InlineKeyboardButton("👤 Kontak Admin", callback_data="contact_admin")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_owner_keyboard():
+    """Create owner menu keyboard"""
+    keyboard = [
+        [InlineKeyboardButton("💸 Beli Lira", callback_data="buy_lira")],
+        [InlineKeyboardButton("💵 Jual Lira", callback_data="sell_lira")],
+        [InlineKeyboardButton("💱 Lihat Simulasi Kurs", callback_data="simulation")],
+        [InlineKeyboardButton("📊 Cek Stok", callback_data="check_stock")],
+        [InlineKeyboardButton("⚙️ Update Stok", callback_data="update_stock")],
         [InlineKeyboardButton("👤 Kontak Admin", callback_data="contact_admin")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -332,6 +257,15 @@ def get_payment_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
+def get_stock_update_keyboard():
+    """Create stock update keyboard"""
+    keyboard = [
+        [InlineKeyboardButton("💰 Update Stok Rupiah", callback_data="update_rupiah")],
+        [InlineKeyboardButton("🇹🇷 Update Stok Lira", callback_data="update_lira")],
+        [InlineKeyboardButton("🔙 Kembali", callback_data="main_menu")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
 def format_currency(amount, currency='IDR'):
     """Format currency display"""
     if currency == 'IDR':
@@ -342,8 +276,7 @@ def format_currency(amount, currency='IDR'):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start command handler"""
-    # Clear any active AI chat session
-    context.user_data.pop('ai_chat_active', None)
+    user = update.effective_user
     
     welcome_message = (
         "💚 **Selamat datang di LiraKuBot!**\n\n"
@@ -353,43 +286,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Silakan pilih menu:"
     )
 
+    # Show different keyboard for owner
+    keyboard = get_owner_keyboard() if user.id == OWNER_USER_ID else get_main_keyboard()
+    
     await update.message.reply_text(
         welcome_message,
-        reply_markup=get_main_keyboard(),
+        reply_markup=keyboard,
         parse_mode='Markdown'
     )
-    return ConversationHandler.END
-
-async def tanya_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start AI chat session with /tanya command"""
-    context.user_data['ai_chat_active'] = True
-    
-    ai_intro = (
-        "🤖 **AI Assistant LiraKuBot**\n\n"
-        "Halo! Saya bisa membantu menjawab pertanyaan tentang:\n"
-        "• Cara menggunakan Lira di Turki\n"
-        "• Tips transaksi di bank/ATM Turki\n"
-        "• Panduan praktis untuk turis\n"
-        "• Informasi umum mata uang Lira\n\n"
-        "💬 **Silakan tanya apa saja!**\n"
-        "Ketik /menu untuk kembali ke menu utama"
-    )
-    
-    await update.message.reply_text(
-        ai_intro,
-        parse_mode='Markdown'
-    )
-    return AI_CHAT_STATE
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle button callbacks"""
     query = update.callback_query
     await query.answer()
+    user = query.from_user
 
     if query.data == "main_menu":
-        # Clear any active AI chat session
-        context.user_data.pop('ai_chat_active', None)
-        
         welcome_message = (
             "💚 **Selamat datang di LiraKuBot!**\n\n"
             "✅ Proses cepat & aman\n"
@@ -397,33 +309,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "✅ Lebih hemat dibanding beli di bandara & bank\n\n"
             "Silakan pilih menu:"
         )
+        
+        keyboard = get_owner_keyboard() if user.id == OWNER_USER_ID else get_main_keyboard()
+        
         await query.edit_message_text(
             welcome_message,
-            reply_markup=get_main_keyboard(),
+            reply_markup=keyboard,
             parse_mode='Markdown'
         )
         return ConversationHandler.END
-
-    elif query.data == "ask_ai":
-        # Start AI chat session
-        context.user_data['ai_chat_active'] = True
-        
-        ai_intro = (
-            "🤖 **AI Assistant LiraKuBot**\n\n"
-            "Halo! Saya bisa membantu menjawab pertanyaan tentang:\n"
-            "• Cara menggunakan Lira di Turki\n"
-            "• Tips transaksi di bank/ATM Turki\n"
-            "• Panduan praktis untuk turis\n"
-            "• Informasi umum mata uang Lira\n\n"
-            "💬 **Silakan tanya apa saja!**\n"
-            "Ketik /menu untuk kembali ke menu utama"
-        )
-        
-        await query.edit_message_text(
-            ai_intro,
-            parse_mode='Markdown'
-        )
-        return AI_CHAT_STATE
 
     elif query.data == "buy_lira":
         if not BUY_LIRA_ACTIVE:
@@ -433,10 +327,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return ConversationHandler.END
 
+        # Check rupiah stock
+        if STOCK['rupiah'] <= 0:
+            await query.edit_message_text(
+                "❌ Maaf, stok Rupiah sedang habis. Silakan coba lagi nanti atau hubungi admin.",
+                reply_markup=get_back_menu_keyboard()
+            )
+            return ConversationHandler.END
+
+        # Calculate available stock info
+        idr_to_try_rate = get_exchange_rate('IDR', 'TRY')
+        if idr_to_try_rate:
+            max_try_available = STOCK['rupiah'] * idr_to_try_rate * 0.975
+            stock_info = f"\n📊 **Stok tersedia:** {format_currency(STOCK['rupiah'])} (≈ ₺{max_try_available:,.2f})"
+        else:
+            stock_info = f"\n📊 **Stok tersedia:** {format_currency(STOCK['rupiah'])}"
+
         await query.edit_message_text(
             "💸 **Beli Lira (IDR ke TRY)**\n\n"
             "Masukkan nominal dalam Rupiah yang ingin dikonversi ke Lira Turki.\n"
-            "Minimal pembelian: Rp100.000\n\n"
+            "Minimal pembelian: Rp100.000\n"
+            f"{stock_info}\n\n"
             "Contoh: 500000",
             reply_markup=get_back_menu_keyboard(),
             parse_mode='Markdown'
@@ -451,9 +362,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return ConversationHandler.END
 
+        # Show available lira stock
+        stock_info = f"\n📊 **Stok Lira tersedia:** ₺{STOCK['lira']:,.2f}"
+
         await query.edit_message_text(
             "💵 **Jual Lira (TRY ke IDR)**\n\n"
-            "Masukkan jumlah Lira Turki yang ingin dijual.\n\n"
+            "Masukkan jumlah Lira Turki yang ingin dijual.\n"
+            f"{stock_info}\n\n"
             "Contoh: 100",
             reply_markup=get_back_menu_keyboard(),
             parse_mode='Markdown'
@@ -462,6 +377,67 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "simulation":
         await show_simulation(query)
+
+    elif query.data == "check_stock":
+        await show_stock_info(query)
+
+    elif query.data == "update_stock":
+        if user.id != OWNER_USER_ID:
+            await query.edit_message_text(
+                "❌ Anda tidak memiliki akses untuk fitur ini.",
+                reply_markup=get_back_menu_keyboard()
+            )
+            return ConversationHandler.END
+
+        await query.edit_message_text(
+            f"⚙️ **Update Stok**\n\n"
+            f"📊 **Stok saat ini:**\n"
+            f"💰 Rupiah: {format_currency(STOCK['rupiah'])}\n"
+            f"🇹🇷 Lira: ₺{STOCK['lira']:,.2f}\n\n"
+            f"Pilih mata uang yang ingin diupdate:",
+            reply_markup=get_stock_update_keyboard(),
+            parse_mode='Markdown'
+        )
+
+    elif query.data == "update_rupiah":
+        if user.id != OWNER_USER_ID:
+            await query.edit_message_text(
+                "❌ Anda tidak memiliki akses untuk fitur ini.",
+                reply_markup=get_back_menu_keyboard()
+            )
+            return ConversationHandler.END
+
+        context.user_data['update_currency'] = 'rupiah'
+        await query.edit_message_text(
+            f"💰 **Update Stok Rupiah**\n\n"
+            f"Stok saat ini: {format_currency(STOCK['rupiah'])}\n\n"
+            f"Masukkan jumlah untuk **MENAMBAH** stok (gunakan angka negatif untuk mengurangi):\n"
+            f"Contoh: 1000000 (menambah 1 juta)\n"
+            f"Contoh: -500000 (mengurangi 500 ribu)",
+            reply_markup=get_back_menu_keyboard(),
+            parse_mode='Markdown'
+        )
+        return WAITING_STOCK_UPDATE_AMOUNT
+
+    elif query.data == "update_lira":
+        if user.id != OWNER_USER_ID:
+            await query.edit_message_text(
+                "❌ Anda tidak memiliki akses untuk fitur ini.",
+                reply_markup=get_back_menu_keyboard()
+            )
+            return ConversationHandler.END
+
+        context.user_data['update_currency'] = 'lira'
+        await query.edit_message_text(
+            f"🇹🇷 **Update Stok Lira**\n\n"
+            f"Stok saat ini: ₺{STOCK['lira']:,.2f}\n\n"
+            f"Masukkan jumlah untuk **MENAMBAH** stok (gunakan angka negatif untuk mengurangi):\n"
+            f"Contoh: 1000 (menambah 1000 Lira)\n"
+            f"Contoh: -500 (mengurangi 500 Lira)",
+            reply_markup=get_back_menu_keyboard(),
+            parse_mode='Markdown'
+        )
+        return WAITING_STOCK_UPDATE_AMOUNT
 
     elif query.data == "contact_admin":
         contact_message = (
@@ -487,10 +463,106 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "back":
         await handle_back_navigation(update, context)
 
+async def handle_stock_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle stock update input"""
+    try:
+        amount = float(update.message.text.replace(',', '.'))
+        currency = context.user_data.get('update_currency')
+        
+        if not currency:
+            await update.message.reply_text(
+                "❌ Error: mata uang tidak ditemukan. Silakan mulai ulang.",
+                reply_markup=get_back_menu_keyboard()
+            )
+            return ConversationHandler.END
+
+        old_stock = STOCK[currency]
+        new_stock = old_stock + amount
+        
+        if new_stock < 0:
+            await update.message.reply_text(
+                f"❌ Error: Stok tidak bisa negatif.\n"
+                f"Stok saat ini: {format_currency(old_stock) if currency == 'rupiah' else f'₺{old_stock:,.2f}'}\n"
+                f"Pengurangan maksimal: {format_currency(old_stock) if currency == 'rupiah' else f'₺{old_stock:,.2f}'}",
+                reply_markup=get_back_menu_keyboard(),
+                parse_mode='Markdown'
+            )
+            return WAITING_STOCK_UPDATE_AMOUNT
+
+        # Update stock
+        STOCK[currency] = new_stock
+        save_stock()
+
+        currency_symbol = "💰" if currency == 'rupiah' else "🇹🇷"
+        old_formatted = format_currency(old_stock) if currency == 'rupiah' else f"₺{old_stock:,.2f}"
+        new_formatted = format_currency(new_stock) if currency == 'rupiah' else f"₺{new_stock:,.2f}"
+        change_formatted = format_currency(amount) if currency == 'rupiah' else f"₺{amount:,.2f}"
+
+        success_message = (
+            f"✅ **Stok {currency_symbol} berhasil diupdate!**\n\n"
+            f"📊 **Perubahan:**\n"
+            f"Stok lama: {old_formatted}\n"
+            f"Perubahan: {'+' if amount >= 0 else ''}{change_formatted}\n"
+            f"Stok baru: {new_formatted}\n\n"
+            f"📅 Update: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+        )
+
+        await update.message.reply_text(
+            success_message,
+            reply_markup=get_back_menu_keyboard(),
+            parse_mode='Markdown'
+        )
+
+        # Clear user data
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Format angka tidak valid. Masukkan angka saja.\n"
+            "Contoh: 1000000 atau -500000",
+            reply_markup=get_back_menu_keyboard()
+        )
+        return WAITING_STOCK_UPDATE_AMOUNT
+
+async def show_stock_info(query):
+    """Show current stock information"""
+    # Get exchange rates for conversion info
+    idr_to_try_rate = get_exchange_rate('IDR', 'TRY')
+    try_to_idr_rate = get_exchange_rate('TRY', 'IDR')
+
+    stock_message = f"📊 **Informasi Stok**\n\n"
+    
+    # Rupiah stock info
+    stock_message += f"💰 **Stok Rupiah:** {format_currency(STOCK['rupiah'])}\n"
+    if idr_to_try_rate and STOCK['rupiah'] > 0:
+        equivalent_try = STOCK['rupiah'] * idr_to_try_rate * 0.975
+        stock_message += f"   ≈ ₺{equivalent_try:,.2f} (setelah margin)\n\n"
+    else:
+        stock_message += "\n"
+
+    # Lira stock info
+    stock_message += f"🇹🇷 **Stok Lira:** ₺{STOCK['lira']:,.2f}\n"
+    if try_to_idr_rate and STOCK['lira'] > 0:
+        equivalent_idr = STOCK['lira'] * try_to_idr_rate * 0.975
+        stock_message += f"   ≈ {format_currency(equivalent_idr)} (setelah margin)\n\n"
+    else:
+        stock_message += "\n"
+
+    stock_message += f"⏰ **Update:** {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n"
+    stock_message += f"💹 **Margin:** 2.5% tersembunyi dalam kurs"
+
+    await query.edit_message_text(
+        stock_message,
+        reply_markup=get_back_menu_keyboard(),
+        parse_mode='Markdown'
+    )
+
 async def handle_back_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle back navigation"""
     query = update.callback_query
     current_state = context.user_data.get('current_state', None)
+    user = query.from_user
 
     if current_state == 'buy_amount':
         await query.edit_message_text(
@@ -584,9 +656,12 @@ async def handle_back_navigation(update: Update, context: ContextTypes.DEFAULT_T
             "✅ Lebih hemat dibanding beli di bandara & bank\n\n"
             "Silakan pilih menu:"
         )
+        
+        keyboard = get_owner_keyboard() if user.id == OWNER_USER_ID else get_main_keyboard()
+        
         await query.edit_message_text(
             welcome_message,
-            reply_markup=get_main_keyboard(),
+            reply_markup=keyboard,
             parse_mode='Markdown'
         )
         return ConversationHandler.END
@@ -613,7 +688,6 @@ async def show_simulation(query):
         f"🇹🇷 ₺100 → {format_currency(100 * try_to_idr_rate * 0.975)}\n"
         f"🇹🇷 ₺500 → {format_currency(500 * try_to_idr_rate * 0.975)}\n"
         f"🇹🇷 ₺1.000 → {format_currency(1000 * try_to_idr_rate * 0.975)}\n\n"
-        f"*Simulasi di atas belum termasuk biaya admin*\n"
         f"*Update: {datetime.now().strftime('%H:%M %d/%m/%Y')}*"
     )
 
@@ -633,6 +707,18 @@ async def handle_buy_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ Minimal pembelian adalah Rp100.000\n"
                 "Silakan masukkan nominal yang valid.",
                 reply_markup=get_back_menu_keyboard()
+            )
+            return WAITING_BUY_AMOUNT
+
+        # Check stock availability
+        if amount > STOCK['rupiah']:
+            await update.message.reply_text(
+                f"❌ Stok tidak mencukupi!\n"
+                f"Stok tersedia: {format_currency(STOCK['rupiah'])}\n"
+                f"Nominal diminta: {format_currency(amount)}\n\n"
+                f"Silakan masukkan nominal yang lebih kecil atau hubungi admin.",
+                reply_markup=get_back_menu_keyboard(),
+                parse_mode='Markdown'
             )
             return WAITING_BUY_AMOUNT
 
@@ -745,21 +831,16 @@ async def handle_buy_iban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['buy_iban'] = iban
     context.user_data['current_state'] = 'buy_confirmation'
 
-    # Show confirmation with admin fee
+    # Show confirmation (no admin fee anymore)
     amount = context.user_data['buy_amount_idr']
     estimated_try = context.user_data['buy_estimated_try']
-    total_payment = amount + ADMIN_FEE
-
-    context.user_data['buy_total_payment'] = total_payment
 
     confirmation_message = (
         "📋 **Konfirmasi Detail Pembelian**\n\n"
         f"👤 **Nama:** {context.user_data['buy_name']}\n"
         f"🏦 **IBAN:** `{iban}`\n"
-        f"💸 **Nominal konversi:** {format_currency(amount)}\n"
-        f"🇹🇷 **TRY yang diterima:** ₺{estimated_try:.2f}\n"
-        f"💼 **Biaya admin:** {format_currency(ADMIN_FEE)}\n"
-        f"💰 **Total pembayaran:** {format_currency(total_payment)}\n\n"
+        f"💸 **Total pembayaran:** {format_currency(amount)}\n"
+        f"🇹🇷 **TRY yang diterima:** ₺{estimated_try:.2f}\n\n"
         f"Apakah data sudah benar?"
     )
 
@@ -783,6 +864,18 @@ async def handle_sell_amount(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             return WAITING_SELL_AMOUNT
 
+        # Check if we have enough lira stock (for selling, we need lira stock)
+        if amount > STOCK['lira']:
+            await update.message.reply_text(
+                f"❌ Stok Lira tidak mencukupi!\n"
+                f"Stok tersedia: ₺{STOCK['lira']:,.2f}\n"
+                f"Jumlah diminta: ₺{amount:,.2f}\n\n"
+                f"Silakan masukkan jumlah yang lebih kecil atau hubungi admin.",
+                reply_markup=get_back_menu_keyboard(),
+                parse_mode='Markdown'
+            )
+            return WAITING_SELL_AMOUNT
+
         # Get exchange rate
         base_rate = get_exchange_rate('TRY', 'IDR')
         if not base_rate:
@@ -792,18 +885,18 @@ async def handle_sell_amount(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             return WAITING_SELL_AMOUNT
 
-        # Calculate dengan margin 2.5% (hidden from user)
-        estimated_idr_gross = amount * base_rate * 0.975
+        # Calculate with margin 2.5% (hidden from user)
+        estimated_idr = amount * base_rate * 0.975
 
         # Store in context
         context.user_data['sell_amount_try'] = amount
-        context.user_data['sell_estimated_idr_gross'] = estimated_idr_gross
+        context.user_data['sell_estimated_idr'] = estimated_idr
         context.user_data['current_state'] = 'sell_name'
 
         await update.message.reply_text(
             f"💰 **Estimasi Konversi**\n\n"
             f"🇹🇷 Lira: ₺{amount:,.2f}\n"
-            f"💵 Estimasi IDR: {format_currency(estimated_idr_gross)}\n\n"
+            f"💵 Estimasi IDR: {format_currency(estimated_idr)}\n\n"
             f"Masukkan nama lengkap Anda:",
             reply_markup=get_back_menu_keyboard(),
             parse_mode='Markdown'
@@ -859,31 +952,16 @@ async def handle_sell_account(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data['sell_account'] = account
     context.user_data['current_state'] = 'sell_confirmation'
 
-    # Show confirmation with admin fee
+    # Show confirmation (no admin fee)
     amount = context.user_data['sell_amount_try']
-    estimated_idr_gross = context.user_data['sell_estimated_idr_gross']
-    estimated_idr_net = estimated_idr_gross - ADMIN_FEE
-
-    # Check if result is positive
-    if estimated_idr_net <= 0:
-        await update.message.reply_text(
-            "❌ Jumlah Lira terlalu kecil. Setelah dikurangi biaya admin, nilai akan negatif.\n"
-            "Silakan masukkan jumlah yang lebih besar.",
-            reply_markup=get_back_menu_keyboard()
-        )
-        context.user_data['current_state'] = 'sell_account'
-        return WAITING_SELL_ACCOUNT
-
-    context.user_data['sell_estimated_idr_net'] = estimated_idr_net
+    estimated_idr = context.user_data['sell_estimated_idr']
 
     confirmation_message = (
         "📋 **Konfirmasi Detail Penjualan**\n\n"
         f"👤 **Nama:** {context.user_data['sell_name']}\n"
         f"🏦 **Rekening:** `{account}`\n"
         f"🪙 **TRY yang dikirim:** ₺{amount:,.2f}\n"
-        f"💵 **IDR sebelum potongan:** {format_currency(estimated_idr_gross)}\n"
-        f"💼 **Biaya admin:** {format_currency(ADMIN_FEE)}\n"
-        f"💰 **IDR yang diterima:** {format_currency(estimated_idr_net)}\n\n"
+        f"💰 **IDR yang diterima:** {format_currency(estimated_idr)}\n\n"
         f"Apakah data sudah benar?"
     )
 
@@ -903,7 +981,6 @@ async def handle_transaction_confirmation(update: Update, context: ContextTypes.
         # Show payment details for buy transaction
         amount = context.user_data['buy_amount_idr']
         estimated_try = context.user_data['buy_estimated_try']
-        total_payment = context.user_data['buy_total_payment']
         iban = context.user_data['buy_iban']
 
         payment_message = (
@@ -911,7 +988,7 @@ async def handle_transaction_confirmation(update: Update, context: ContextTypes.
             f"👤 **Nama:** {context.user_data['buy_name']}\n"
             f"🏦 **IBAN:** `{iban}`\n"
             f"🇹🇷 **TRY yang diterima:** ₺{estimated_try:.2f}\n"
-            f"💰 **Total pembayaran:** {format_currency(total_payment)}\n\n"
+            f"💰 **Total pembayaran:** {format_currency(amount)}\n\n"
             f"💳 **Transfer ke:**\n"
             f"🏦 Bank: BCA\n"
             f"💳 Rekening: `7645257260`\n"
@@ -928,7 +1005,7 @@ async def handle_transaction_confirmation(update: Update, context: ContextTypes.
     elif current_state == 'sell_confirmation':
         # Show transfer details for sell transaction
         amount = context.user_data['sell_amount_try']
-        estimated_idr_net = context.user_data['sell_estimated_idr_net']
+        estimated_idr = context.user_data['sell_estimated_idr']
         account = context.user_data['sell_account']
 
         transfer_message = (
@@ -936,7 +1013,7 @@ async def handle_transaction_confirmation(update: Update, context: ContextTypes.
             f"👤 **Nama:** {context.user_data['sell_name']}\n"
             f"🏦 **Rekening Anda:** `{account}`\n"
             f"🪙 **TRY yang dikirim:** ₺{amount:,.2f}\n"
-            f"💰 **IDR yang diterima:** {format_currency(estimated_idr_net)}\n\n"
+            f"💰 **IDR yang diterima:** {format_currency(estimated_idr)}\n\n"
             f"🏦 **Kirim Lira ke IBAN Admin:**\n"
             f"`{ADMIN_IBAN}`\n\n"
             f"Setelah mengirim, klik tombol di bawah:"
@@ -962,12 +1039,17 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
     user = query.from_user
 
     # Check if we have the necessary data
-    if not all(key in context.user_data for key in ['buy_name', 'buy_iban', 'buy_amount_idr', 'buy_estimated_try', 'buy_total_payment']):
+    if not all(key in context.user_data for key in ['buy_name', 'buy_iban', 'buy_amount_idr', 'buy_estimated_try']):
         await query.edit_message_text(
             "❌ Data transaksi tidak lengkap. Silakan mulai transaksi baru.",
             reply_markup=get_main_keyboard()
         )
         return
+
+    # Update stock - reduce rupiah
+    amount_idr = context.user_data['buy_amount_idr']
+    update_stock('rupiah', -amount_idr)
+    logger.info(f"Stock updated: Reduced {amount_idr} IDR, remaining: {STOCK['rupiah']}")
 
     # Prepare transaction data
     now = datetime.now()
@@ -975,7 +1057,7 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
         now.strftime('%Y-%m-%d %H:%M:%S'),
         context.user_data.get('buy_name', ''),
         context.user_data.get('buy_iban', ''),
-        context.user_data.get('buy_total_payment', 0),
+        context.user_data.get('buy_amount_idr', 0),
         round(context.user_data.get('buy_estimated_try', 0), 2),
         'Menunggu Konfirmasi',
         user.username or '',
@@ -993,11 +1075,10 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
         f"🆔 **Username:** @{user.username or 'Tidak ada'}\n"
         f"🆔 **User ID:** {user.id}\n"
         f"🏦 **IBAN:** `{context.user_data.get('buy_iban', '')}`\n"
-        f"💸 **Nominal konversi:** {format_currency(context.user_data.get('buy_amount_idr', 0))}\n"
-        f"💼 **Biaya admin:** {format_currency(ADMIN_FEE)}\n"
-        f"💰 **Total pembayaran:** {format_currency(context.user_data.get('buy_total_payment', 0))}\n"
+        f"💰 **Total pembayaran:** {format_currency(context.user_data.get('buy_amount_idr', 0))}\n"
         f"🇹🇷 **TRY Dikirim:** ₺{context.user_data.get('buy_estimated_try', 0):.2f}\n"
         f"📊 **Margin tersembunyi:** 2.5% dari konversi\n"
+        f"📦 **Stok Rupiah tersisa:** {format_currency(STOCK['rupiah'])}\n"
         f"⏰ **Waktu:** {now.strftime('%d/%m/%Y %H:%M:%S')}\n"
         f"💾 **Status Simpan:** {'✅ Berhasil' if save_success else '❌ Gagal'}\n\n"
         f"**Silakan verifikasi pembayaran dan proses transaksi ini.**"
@@ -1024,7 +1105,7 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
         f"🏦 **Detail Transfer Anda:**\n"
         f"💳 Rekening: `7645257260` (BCA)\n"
         f"👤 a.n. Muhammad Haikal Sutanto\n"
-        f"💰 Jumlah: {format_currency(context.user_data.get('buy_total_payment', 0))}\n\n"
+        f"💰 Jumlah: {format_currency(context.user_data.get('buy_amount_idr', 0))}\n\n"
         f"🇹🇷 **IBAN Tujuan:** `{context.user_data.get('buy_iban', '')}`\n"
         f"₺ **TRY yang akan diterima:** ₺{context.user_data.get('buy_estimated_try', 0):.2f}\n\n"
         "📱 **Estimasi Waktu Proses:** 5-15 menit\n"
@@ -1043,12 +1124,17 @@ async def handle_sell_confirmation(update: Update, context: ContextTypes.DEFAULT
     user = query.from_user
 
     # Check if we have the necessary data
-    if not all(key in context.user_data for key in ['sell_name', 'sell_account', 'sell_amount_try', 'sell_estimated_idr_net']):
+    if not all(key in context.user_data for key in ['sell_name', 'sell_account', 'sell_amount_try', 'sell_estimated_idr']):
         await query.edit_message_text(
             "❌ Data transaksi tidak lengkap. Silakan mulai transaksi baru.",
             reply_markup=get_main_keyboard()
         )
         return
+
+    # Update stock - add lira (user is sending lira to us), reduce lira from available stock
+    amount_try = context.user_data['sell_amount_try']
+    update_stock('lira', -amount_try)  # Reduce because user is taking from our stock
+    logger.info(f"Stock updated: Reduced {amount_try} TRY, remaining: {STOCK['lira']}")
 
     # Prepare transaction data
     now = datetime.now()
@@ -1056,7 +1142,7 @@ async def handle_sell_confirmation(update: Update, context: ContextTypes.DEFAULT
         now.strftime('%Y-%m-%d %H:%M:%S'),
         context.user_data.get('sell_name', ''),
         context.user_data.get('sell_account', ''),
-        round(context.user_data.get('sell_estimated_idr_net', 0)),
+        round(context.user_data.get('sell_estimated_idr', 0)),
         context.user_data.get('sell_amount_try', 0),
         'Menunggu Konfirmasi',
         user.username or '',
@@ -1074,11 +1160,10 @@ async def handle_sell_confirmation(update: Update, context: ContextTypes.DEFAULT
         f"🆔 **Username:** @{user.username or 'Tidak ada'}\n"
         f"🆔 **User ID:** {user.id}\n"
         f"🏦 **Rekening:** `{context.user_data.get('sell_account', '')}`\n"
-        f"🪙 **TRY Dikirim:** ₺{context.user_data.get('sell_amount_try', 0):,.2f}\n"
-        f"💵 **IDR gross (dengan margin):** {format_currency(context.user_data.get('sell_estimated_idr_gross', 0))}\n"
-        f"💼 **Biaya admin:** {format_currency(ADMIN_FEE)}\n"
-        f"💰 **IDR yang diterima user:** {format_currency(context.user_data.get('sell_estimated_idr_net', 0))}\n"
+        f"🪙 **TRY dari user:** ₺{context.user_data.get('sell_amount_try', 0):,.2f}\n"
+        f"💰 **IDR yang diterima user:** {format_currency(context.user_data.get('sell_estimated_idr', 0))}\n"
         f"📊 **Margin tersembunyi:** 2.5% dari konversi\n"
+        f"📦 **Stok Lira tersisa:** ₺{STOCK['lira']:,.2f}\n"
         f"🏦 **IBAN Admin:** `{ADMIN_IBAN}`\n"
         f"⏰ **Waktu:** {now.strftime('%d/%m/%Y %H:%M:%S')}\n"
         f"💾 **Status Simpan:** {'✅ Berhasil' if save_success else '❌ Gagal'}\n\n"
@@ -1108,7 +1193,7 @@ async def handle_sell_confirmation(update: Update, context: ContextTypes.DEFAULT
         f"🪙 **TRY yang Anda kirim:** ₺{context.user_data.get('sell_amount_try', 0):,.2f}\n\n"
         f"🏦 **Rekening Anda (tujuan IDR):**\n"
         f"`{context.user_data.get('sell_account', '')}`\n"
-        f"💰 **IDR yang akan diterima:** {format_currency(context.user_data.get('sell_estimated_idr_net', 0))}\n\n"
+        f"💰 **IDR yang akan diterima:** {format_currency(context.user_data.get('sell_estimated_idr', 0))}\n\n"
         "📱 **Estimasi Waktu Proses:** 5-15 menit\n"
         "💬 **Jika ada pertanyaan:** @lirakuid\n\n"
         "Kami akan mengirim notifikasi setelah transfer selesai.",
@@ -1121,15 +1206,21 @@ async def handle_sell_confirmation(update: Update, context: ContextTypes.DEFAULT
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancel conversation"""
+    user = update.effective_user
+    keyboard = get_owner_keyboard() if user.id == OWNER_USER_ID else get_main_keyboard()
+    
     await update.message.reply_text(
         "❌ Transaksi dibatalkan.",
-        reply_markup=get_main_keyboard()
+        reply_markup=keyboard
     )
     return ConversationHandler.END
 
 def main():
     """Main function to run the bot"""
     try:
+        # Load stock data on startup
+        load_stock()
+        
         # Validate environment variables
         if not BOT_TOKEN:
             raise ValueError("BOT_TOKEN tidak ditemukan dalam environment variables")
@@ -1137,8 +1228,8 @@ def main():
             raise ValueError("EXCHANGE_API_KEY tidak ditemukan dalam environment variables")
         if not ADMIN_CHAT_ID:
             logger.warning("ADMIN_CHAT_ID tidak ditemukan, notifikasi admin tidak akan dikirim")
-        if not GROQ_API_KEY:
-            logger.warning("GROQ_API_KEY tidak ditemukan, AI Assistant tidak akan berfungsi")
+        if not OWNER_USER_ID:
+            logger.warning("OWNER_USER_ID tidak ditemukan, fitur owner tidak akan tersedia")
 
         logger.info("Initializing bot application...")
 
@@ -1150,27 +1241,6 @@ def main():
             # Try alternative method
             from telegram.ext import ApplicationBuilder
             application = ApplicationBuilder().token(BOT_TOKEN).build()
-
-        # Add conversation handler for AI chat
-        ai_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler('tanya', tanya_command),
-                CallbackQueryHandler(button_handler, pattern="^ask_ai$")
-            ],
-            states={
-                AI_CHAT_STATE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ai_question),
-                    CommandHandler('menu', start),
-                    CommandHandler('start', start)
-                ]
-            },
-            fallbacks=[
-                CommandHandler('cancel', cancel),
-                CommandHandler('menu', start),
-                CommandHandler('start', start)
-            ],
-            allow_reentry=True
-        )
 
         # Add conversation handler for buy lira
         buy_conv_handler = ConversationHandler(
@@ -1226,12 +1296,31 @@ def main():
             allow_reentry=True
         )
 
-        # Add handlers in priority order
+        # Add conversation handler for stock updates (owner only)
+        stock_conv_handler = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(button_handler, pattern="^update_rupiah$"),
+                CallbackQueryHandler(button_handler, pattern="^update_lira$")
+            ],
+            states={
+                WAITING_STOCK_UPDATE_AMOUNT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_stock_update),
+                    CallbackQueryHandler(button_handler, pattern="^(back|main_menu)$")
+                ],
+            },
+            fallbacks=[
+                CommandHandler('cancel', cancel),
+                CallbackQueryHandler(button_handler, pattern="^(back|main_menu)$")
+            ],
+            allow_reentry=True
+        )
+
+        # Add handlers
         application.add_handler(CommandHandler("start", start))
-        application.add_handler(ai_conv_handler, group=0)  # AI handler dengan group 0 (prioritas tinggi)
-        application.add_handler(buy_conv_handler, group=1)
-        application.add_handler(sell_conv_handler, group=2)
-        application.add_handler(CallbackQueryHandler(button_handler), group=3)
+        application.add_handler(buy_conv_handler)
+        application.add_handler(sell_conv_handler)
+        application.add_handler(stock_conv_handler)
+        application.add_handler(CallbackQueryHandler(button_handler))
 
         # Start keep alive server before polling (IMPORTANT!)
         print("🌐 Starting keep-alive server...")
@@ -1239,6 +1328,7 @@ def main():
 
         # Start polling with error handling
         print("🤖 LiraKuBot is starting...")
+        print(f"📊 Initial stock: Rupiah: {format_currency(STOCK['rupiah'])}, Lira: ₺{STOCK['lira']:,.2f}")
         logger.info("Bot started successfully")
 
         # Use run_polling with proper parameters
